@@ -8,6 +8,8 @@ let mongoose = require('mongoose');
 let morgan = require('morgan');
 // dotenv
 require('dotenv').config();
+// Import redis
+const redis = require('redis');
 // Initialise the app
 let app = express();
 
@@ -32,6 +34,16 @@ else
 // Setup server port
 var port = process.env.PORT || 8080;
 
+// connect to redis
+var redisClient;
+
+(async () => {
+    redisClient = redis.createClient();
+    redisClient.on("error", (err) => console.error(err));
+    await redisClient.connect();
+}) ();
+
+
 // Set default API response
 app.get('/', function (req, res) {
     res.json({
@@ -42,13 +54,30 @@ app.get('/', function (req, res) {
 // Import contact controller
 let contactController = require('./routes/contact');
 // Contact routes
-app.route('/contacts')
-    .get(contactController.getContacts)
-    .post(contactController.postContact)
-app.route('/contacts/:id')
-    .get(contactController.getContact)
-    .put(contactController.updateContact)
-    .delete(contactController.deleteContact);
+app.get('/contacts', async (req, resp) => {
+    let res;
+    let isCached = false;
+    try {
+        const cacheRes = await redisClient.get('cached contacts');
+        if (cacheRes) {
+            isCached = true;
+            res = JSON.parse(cacheRes);
+        } else {
+            res = await contactController.getContacts();
+            if (res.length === 0) {
+                throw "Error: empty array"
+            }
+            await redisClient.set('cached contacts', JSON.stringify(res));
+        }
+        resp.json(res);
+    } catch (err) {
+        console.log(err);
+        resp.sendStatus(404);
+    }
+    // res = await contactController.getContacts();
+    // resp.json(res);
+});
+
 
 // Launch app to listen to specified port
 app.listen(port, function () {
